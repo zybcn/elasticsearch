@@ -11,7 +11,6 @@ package org.elasticsearch.action.support.local;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.elasticsearch.ElasticsearchTimeoutException;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.action.ActionRunnable;
@@ -23,6 +22,7 @@ import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.discovery.MasterNotDiscoveredException;
 import org.elasticsearch.node.NodeClosedException;
 import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.tasks.Task;
@@ -72,6 +72,8 @@ public abstract class TransportLocalClusterStateAction<Request extends LocalClus
             } else {
                 waitForClusterUnblock(task, request, listener, state, clusterBlockException);
             }
+        } else if (state.nodes().getMasterNode() == null) {
+            waitForClusterUnblock(task, request, listener, state, null);
         } else {
             innerDoExecute(task, request, listener, state);
         }
@@ -117,9 +119,12 @@ public abstract class TransportLocalClusterStateAction<Request extends LocalClus
                     () -> format("timed out while waiting for cluster to unblock in [%s] (timeout [%s])", actionName, timeout),
                     exception
                 );
-                listener.onFailure(new ElasticsearchTimeoutException("timed out while waiting for cluster to unblock", exception));
+                listener.onFailure(new MasterNotDiscoveredException(exception));
             }
-        }, clusterState -> isTaskCancelled(task) || checkBlock(request, clusterState) == null);
+        },
+            clusterState -> isTaskCancelled(task)
+                || (clusterState.nodes().getMasterNode() != null && checkBlock(request, clusterState) == null)
+        );
     }
 
     private boolean isTaskCancelled(Task task) {
